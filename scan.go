@@ -21,7 +21,11 @@ package scanFT
 
 import (
 	"image/color"
+	"math"
 
+	"image/draw"
+
+	"github.com/srwiley/rasterx"
 	"golang.org/x/image/math/fixed"
 )
 
@@ -56,19 +60,41 @@ type (
 		// Linked list of cells, one per row.
 		cellIndex []int
 		// Buffers.
-		cellBuf      [256]cell
-		cellIndexBuf [64]int
-		spanBuf      [64]Span
-		Pntr         *RGBAPainter
+		cellBuf                [256]cell
+		cellIndexBuf           [64]int
+		spanBuf                [64]Span
+		Pntr                   *RGBAColFuncPainter
+		minX, minY, maxX, maxY fixed.Int26_6 // keep track of bounds
 	}
 )
+
+func (s *ScannerFT) set(a fixed.Point26_6) {
+	if s.maxX < a.X {
+		s.maxX = a.X
+	}
+	if s.maxY < a.Y {
+		s.maxY = a.Y
+	}
+	if s.minX > a.X {
+		s.minX = a.X
+	}
+	if s.minY > a.Y {
+		s.minY = a.Y
+	}
+}
 
 func (s *ScannerFT) SetWinding(useNonZeroWinding bool) {
 	s.UseNonZeroWinding = useNonZeroWinding
 }
 
-func (s *ScannerFT) SetColor(c color.Color) {
-	s.Pntr.SetColor(c)
+func (s *ScannerFT) SetColor(clr interface{}) {
+	switch c := clr.(type) {
+	case color.Color:
+		s.Pntr.SetColor(c)
+		s.Pntr.colorFunc = nil
+	case rasterx.ColorFunc:
+		s.Pntr.colorFunc = c
+	}
 }
 
 // findCell returns the index in r.cell for the cell corresponding to
@@ -205,12 +231,14 @@ func (s *ScannerFT) scan(yi int, x0, y0f, x1, y1f fixed.Int26_6) {
 
 // Start starts a new path at the given point.
 func (s *ScannerFT) Start(a fixed.Point26_6) {
+	s.set(a)
 	s.setCell(int(a.X/64), int(a.Y/64))
 	s.a = a
 }
 
 // Line adds a linear segment to the current curve.
 func (s *ScannerFT) Line(b fixed.Point26_6) {
+	s.set(b)
 	x0, y0 := s.a.X, s.a.Y
 	x1, y1 := b.X, b.Y
 	dx, dy := x1-x0, y1-y0
@@ -396,6 +424,10 @@ func (s *ScannerFT) Draw() {
 	s.Pntr.Paint(s.spanBuf[:t], true)
 }
 
+func (s *ScannerFT) GetPathExtent() fixed.Rectangle26_6 {
+	return fixed.Rectangle26_6{fixed.Point26_6{s.minX, s.minY}, fixed.Point26_6{s.maxX, s.maxY}}
+}
+
 // Clear cancels any previous accumulated scans
 func (s *ScannerFT) Clear() {
 	s.a = fixed.Point26_6{}
@@ -407,6 +439,8 @@ func (s *ScannerFT) Clear() {
 	for i := 0; i < len(s.cellIndex); i++ {
 		s.cellIndex[i] = -1
 	}
+	const mxfi = fixed.Int26_6(math.MaxInt32)
+	s.minX, s.minY, s.maxX, s.maxY = mxfi, mxfi, -mxfi, -mxfi
 }
 
 // SetBounds sets the maximum width and height of the rasterized image and
@@ -432,8 +466,76 @@ func (s *ScannerFT) SetBounds(width, height int) {
 // NewScanner creates a new Scanner with the given bounds.
 func NewScannerFT(width, height int, p *RGBAPainter) *ScannerFT {
 	s := new(ScannerFT)
-	s.Pntr = p
+	s.Pntr = &RGBAColFuncPainter{RGBAPainter: *p}
 	s.SetBounds(width, height)
 	s.UseNonZeroWinding = true
 	return s
+}
+
+// RGBAColFuncPainter is a Painter that paints Spans onto a *image.RGBA,
+// and uses a color function as a the color source, or the composed RGBA
+// paint func for a solid color
+type RGBAColFuncPainter struct {
+	RGBAPainter
+	//Op draw.Op
+	// cr, cg, cb and ca are the 16-bit color to paint the spans.
+	colorFunc rasterx.ColorFunc
+}
+
+// Paint satisfies the Painter interface.
+func (r *RGBAColFuncPainter) Paint(ss []Span, done bool) {
+	if r.colorFunc == nil {
+		r.RGBAPainter.Paint(ss, done)
+		return
+	}
+	b := r.Image.Bounds()
+	for _, s := range ss {
+		if s.Y < b.Min.Y {
+			continue
+		}
+		if s.Y >= b.Max.Y {
+			return
+		}
+		if s.X0 < b.Min.X {
+			s.X0 = b.Min.X
+		}
+		if s.X1 > b.Max.X {
+			s.X1 = b.Max.X
+		}
+		if s.X0 >= s.X1 {
+			continue
+		}
+		// This code mimics drawGlyphOver in $GOROOT/src/image/draw/draw.go.
+		ma := s.Alpha
+		const m = 1<<16 - 1
+		i0 := (s.Y-r.Image.Rect.Min.Y)*r.Image.Stride + (s.X0-r.Image.Rect.Min.X)*4
+		i1 := i0 + (s.X1-s.X0)*4
+		cx := s.X0
+		if r.Op == draw.Over {
+			for i := i0; i < i1; i += 4 {
+				rcr, rcg, rcb, rca := r.colorFunc(cx, s.Y).RGBA()
+				cx++
+				dr := uint32(r.Image.Pix[i+0])
+				dg := uint32(r.Image.Pix[i+1])
+				db := uint32(r.Image.Pix[i+2])
+				da := uint32(r.Image.Pix[i+3])
+				a := (m - (rca * ma / m)) * 0x101
+				r.Image.Pix[i+0] = uint8((dr*a + rcr*ma) / m >> 8)
+				r.Image.Pix[i+1] = uint8((dg*a + rcg*ma) / m >> 8)
+				r.Image.Pix[i+2] = uint8((db*a + rcb*ma) / m >> 8)
+				r.Image.Pix[i+3] = uint8((da*a + rca*ma) / m >> 8)
+			}
+		} else {
+			for i := i0; i < i1; i += 4 {
+				c := r.colorFunc(cx, s.Y)
+				cx++
+				rcr, rcb, rcg, rca := c.RGBA()
+
+				r.Image.Pix[i+0] = uint8(rcr * ma / m >> 8)
+				r.Image.Pix[i+1] = uint8(rcg * ma / m >> 8)
+				r.Image.Pix[i+2] = uint8(rcb * ma / m >> 8)
+				r.Image.Pix[i+3] = uint8(rca * ma / m >> 8)
+			}
+		}
+	}
 }
