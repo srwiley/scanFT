@@ -20,6 +20,7 @@
 package scanFT
 
 import (
+	"image"
 	"image/color"
 	"math"
 
@@ -45,6 +46,9 @@ type (
 		UseNonZeroWinding bool
 		// An offset (in pixels) to the painted spans.
 		Dx, Dy int
+
+		// additional clipping rectangle
+		clip image.Rectangle
 
 		// The width of the Rasterizer. The height is implicit in len(cellIndex).
 		width int
@@ -416,12 +420,12 @@ func (s *ScannerFT) Draw() {
 				}
 			}
 			if t > len(s.spanBuf)-2 {
-				s.Pntr.Paint(s.spanBuf[:t], false)
+				s.Pntr.Paint(s.spanBuf[:t], false, s.clip)
 				t = 0
 			}
 		}
 	}
-	s.Pntr.Paint(s.spanBuf[:t], true)
+	s.Pntr.Paint(s.spanBuf[:t], true, s.clip)
 }
 
 func (s *ScannerFT) GetPathExtent() fixed.Rectangle26_6 {
@@ -463,6 +467,12 @@ func (s *ScannerFT) SetBounds(width, height int) {
 	s.Clear()
 }
 
+// SetClip sets an optional clipping rectangle to restrict rendering only to
+// that region -- if size is 0 then ignored (set to image.ZR to clear)
+func (s *ScannerFT) SetClip(rect image.Rectangle) {
+	s.clip = rect
+}
+
 // NewScanner creates a new Scanner with the given bounds.
 func NewScannerFT(width, height int, p *RGBAPainter) *ScannerFT {
 	s := new(ScannerFT)
@@ -483,12 +493,15 @@ type RGBAColFuncPainter struct {
 }
 
 // Paint satisfies the Painter interface.
-func (r *RGBAColFuncPainter) Paint(ss []Span, done bool) {
+func (r *RGBAColFuncPainter) Paint(ss []Span, done bool, clip image.Rectangle) {
 	if r.colorFunc == nil {
-		r.RGBAPainter.Paint(ss, done)
+		r.RGBAPainter.Paint(ss, done, clip)
 		return
 	}
 	b := r.Image.Bounds()
+	if clip.Size() != image.ZP {
+		b = b.Intersect(clip)
+	}
 	for _, s := range ss {
 		if s.Y < b.Min.Y {
 			continue

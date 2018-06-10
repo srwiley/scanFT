@@ -27,11 +27,11 @@ type (
 	// Spans' Y values are monotonically increasing during a rasterization. Paint
 	// may use all of ss as scratch space during the call.
 	Painter interface {
-		Paint(ss []Span, done bool)
+		Paint(ss []Span, done bool, clip image.Rectangle)
 	}
 
 	// The PainterFunc type adapts an ordinary function to the Painter interface.
-	PainterFunc func(ss []Span, done bool)
+	PainterFunc func(ss []Span, done bool, clip image.Rectangle)
 
 	// A ClipRectPainter wraps another Painter, but restricts painting to within
 	// the ClipRect
@@ -86,11 +86,14 @@ type (
 )
 
 // Paint just delegates the call to f.
-func (f PainterFunc) Paint(ss []Span, done bool) { f(ss, done) }
+func (f PainterFunc) Paint(ss []Span, done bool, clip image.Rectangle) { f(ss, done, clip) }
 
 // Paint satisfies the Painter interface.
-func (r AlphaOverPainter) Paint(ss []Span, done bool) {
+func (r AlphaOverPainter) Paint(ss []Span, done bool, clip image.Rectangle) {
 	b := r.Image.Bounds()
+	if clip.Size() != image.ZP {
+		b = b.Intersect(clip)
+	}
 	for _, s := range ss {
 		if s.Y < b.Min.Y {
 			continue
@@ -123,8 +126,11 @@ func NewAlphaOverPainter(m *image.Alpha) AlphaOverPainter {
 }
 
 // Paint satisfies the Painter interface.
-func (r AlphaSrcPainter) Paint(ss []Span, done bool) {
+func (r AlphaSrcPainter) Paint(ss []Span, done bool, clip image.Rectangle) {
 	b := r.Image.Bounds()
+	if clip.Size() != image.ZP {
+		b = b.Intersect(clip)
+	}
 	for _, s := range ss {
 		if s.Y < b.Min.Y {
 			continue
@@ -156,8 +162,11 @@ func NewAlphaSrcPainter(m *image.Alpha) AlphaSrcPainter {
 }
 
 // Paint satisfies the Painter interface.
-func (r *RGBAPainter) Paint(ss []Span, done bool) {
+func (r *RGBAPainter) Paint(ss []Span, done bool, clip image.Rectangle) {
 	b := r.Image.Bounds()
+	if clip.Size() != image.ZP {
+		b = b.Intersect(clip)
+	}
 	for _, s := range ss {
 		if s.Y < b.Min.Y {
 			continue
@@ -214,7 +223,7 @@ func NewRGBAPainter(m *image.RGBA) *RGBAPainter {
 
 // Paint delegates to the wrapped Painter after quantizing each Span's alpha
 // value and merging adjacent fully opaque Spans.
-func (m *MonochromePainter) Paint(ss []Span, done bool) {
+func (m *MonochromePainter) Paint(ss []Span, done bool, clip image.Rectangle) {
 	// We compact the ss slice, discarding any Spans whose alpha quantizes to zero.
 	j := 0
 	for _, s := range ss {
@@ -234,23 +243,23 @@ func (m *MonochromePainter) Paint(ss []Span, done bool) {
 		if j < len(ss) {
 			ss[j] = finalSpan
 			j++
-			m.Painter.Paint(ss[:j], true)
+			m.Painter.Paint(ss[:j], true, clip)
 		} else if j == len(ss) {
-			m.Painter.Paint(ss, false)
+			m.Painter.Paint(ss, false, clip)
 			if cap(ss) > 0 {
 				ss = ss[:1]
 			} else {
 				ss = make([]Span, 1)
 			}
 			ss[0] = finalSpan
-			m.Painter.Paint(ss, true)
+			m.Painter.Paint(ss, true, clip)
 		} else {
 			panic("unreachable")
 		}
 		// Reset the accumulator, so that this Painter can be re-used.
 		m.y, m.x0, m.x1 = 0, 0, 0
 	} else {
-		m.Painter.Paint(ss[:j], false)
+		m.Painter.Paint(ss[:j], false, clip)
 	}
 }
 
@@ -262,7 +271,7 @@ func NewMonochromePainter(p Painter) *MonochromePainter {
 
 // Paint delegates to the wrapped Painter after performing gamma-correction on
 // each Span.
-func (g *GammaCorrectionPainter) Paint(ss []Span, done bool) {
+func (g *GammaCorrectionPainter) Paint(ss []Span, done bool, clip image.Rectangle) {
 	if !g.gammaIsOne {
 		const n = 0x101
 		for i, s := range ss {
@@ -275,7 +284,7 @@ func (g *GammaCorrectionPainter) Paint(ss []Span, done bool) {
 			ss[i].Alpha = (a + n/2) / n
 		}
 	}
-	g.Painter.Paint(ss, done)
+	g.Painter.Paint(ss, done, clip)
 }
 
 // SetGamma sets the gamma value.

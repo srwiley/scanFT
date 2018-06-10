@@ -76,7 +76,7 @@ func GetTestPath() (testPath Path) {
 
 var (
 	p         = GetTestPath()
-	wx, wy    = 128, 128
+	wx, wy    = 512, 512
 	img       = image.NewRGBA(image.Rect(0, 0, wx, wy))
 	painter   = NewRGBAPainter(img)
 	scannerFT = NewScannerFT(wx, wy, painter)
@@ -162,7 +162,7 @@ func TestMultiFunctionFT(t *testing.T) {
 	f.Draw()
 	f.Clear()
 
-	painter.SetColor(color.NRGBA{240, 124, 0, 255})
+	d.SetColor(color.NRGBA{240, 124, 0, 255})
 	s := &d.Stroker // This is the anon Stroke in the Dasher. It also satisfies
 	// the Rasterizer interface, but will perform a fill on the path.
 	p.AddTo(s)
@@ -172,7 +172,8 @@ func TestMultiFunctionFT(t *testing.T) {
 	// Now lets use the Dasher itself; it will perform a dashed stroke if dashes are set
 	// in the SetStroke method.
 
-	painter.SetColor(color.NRGBA{255, 0, 0, 255})
+	d.SetColor(color.NRGBA{255, 0, 0, 255})
+	d.SetClip(image.Rect(100, 100, 300, 250))
 	p.AddTo(d)
 	d.Draw()
 	d.Clear()
