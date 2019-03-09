@@ -473,7 +473,7 @@ func (s *ScannerFT) SetClip(rect image.Rectangle) {
 	s.clip = rect
 }
 
-// NewScanner creates a new Scanner with the given bounds.
+// NewScannerFT creates a new Scanner with the given bounds.
 func NewScannerFT(width, height int, p *RGBAPainter) *ScannerFT {
 	s := new(ScannerFT)
 	s.Pntr = &RGBAColFuncPainter{RGBAPainter: *p}
