@@ -429,6 +429,7 @@ func (s *ScannerFT) Draw() {
 }
 
 func (s *ScannerFT) GetPathExtent() fixed.Rectangle26_6 {
+	//fmt.Println("Get path extent")
 	return fixed.Rectangle26_6{fixed.Point26_6{s.minX, s.minY}, fixed.Point26_6{s.maxX, s.maxY}}
 }
 
@@ -527,6 +528,7 @@ func (r *RGBAColFuncPainter) Paint(ss []Span, done bool, clip image.Rectangle) {
 		if r.Op == draw.Over {
 			for i := i0; i < i1; i += 4 {
 				rcr, rcg, rcb, rca := r.colorFunc(cx, s.Y).RGBA()
+				//fmt.Println("rgb x y ", rcr, rcg, rcg, rca, cx, s.Y)
 				cx++
 				dr := uint32(r.Image.Pix[i+0])
 				dg := uint32(r.Image.Pix[i+1])
